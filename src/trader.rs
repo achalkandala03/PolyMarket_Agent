@@ -4,7 +4,7 @@
 //! - After lock, monitor again: if the other side is falling or flat → buy our side again; repeat.
 //! PnL is calculated only after market closes (same in simulation and production).
 
-use crate::api::PolymarketApi;
+use crate::api::KalshiApi;
 use crate::monitor::MarketSnapshot;
 use anyhow::Result;
 use log::warn;
@@ -44,7 +44,7 @@ enum Trend {
 }
 
 pub struct Trader {
-    api: Arc<PolymarketApi>,
+    api: Arc<KalshiApi>,
     simulation_mode: bool,
     cost_per_pair_max: f64,
     min_side_price: f64,
@@ -79,7 +79,7 @@ struct CycleTrade {
 
 impl Trader {
     pub fn new(
-        api: Arc<PolymarketApi>,
+        api: Arc<KalshiApi>,
         simulation_mode: bool,
         cost_per_pair_max: f64,
         min_side_price: f64,
@@ -433,10 +433,10 @@ impl Trader {
                 total_invest, pnl_if_up_wins, pnl_if_down_wins
             );
             if self.simulation_mode {
-                self.record_trade(condition_id, period_timestamp, duration_secs, "Up", up_token_id.as_deref().unwrap_or(""), size, up_ask).await?;
-            } else if let Some(ref up_id) = up_token_id {
-                self.execute_buy_fak(market_name, "Up", up_id, size, up_ask).await?;
-                self.record_trade(condition_id, period_timestamp, duration_secs, "Up", up_id, size, up_ask).await?;
+                self.record_trade(condition_id, period_timestamp, duration_secs, "Up", "yes", size, up_ask).await?;
+            } else {
+                self.execute_buy_fak(market_name, "Up", condition_id, "yes", size, up_ask).await?;
+                self.record_trade(condition_id, period_timestamp, duration_secs, "Up", "yes", size, up_ask).await?;
             }
         } else {
             let cost_pp = if pairs_after_down > 0.0 { cost_per_pair_down } else { down_ask };
@@ -462,10 +462,10 @@ impl Trader {
                 total_invest, pnl_if_up_wins, pnl_if_down_wins
             );
             if self.simulation_mode {
-                self.record_trade(condition_id, period_timestamp, duration_secs, "Down", down_token_id.as_deref().unwrap_or(""), size, down_ask).await?;
-            } else if let Some(ref down_id) = down_token_id {
-                self.execute_buy_fak(market_name, "Down", down_id, size, down_ask).await?;
-                self.record_trade(condition_id, period_timestamp, duration_secs, "Down", down_id, size, down_ask).await?;
+                self.record_trade(condition_id, period_timestamp, duration_secs, "Down", "no", size, down_ask).await?;
+            } else {
+                self.execute_buy_fak(market_name, "Down", condition_id, "no", size, down_ask).await?;
+                self.record_trade(condition_id, period_timestamp, duration_secs, "Down", "no", size, down_ask).await?;
             }
         }
 
@@ -501,24 +501,25 @@ impl Trader {
     async fn execute_buy_fak(
         &self,
         market_name: &str,
-        side: &str,
-        token_id: &str,
+        side: &str,      // "Up" or "Down" (for logging)
+        ticker: &str,    // Kalshi market ticker
+        kalshi_side: &str, // "yes" (Up) or "no" (Down)
         shares: f64,
         price: f64,
     ) -> Result<()> {
         crate::log_println!(
-            "{} BUY {} {:.2} shares @ ${:.4} (FAK - partial fill possible)",
+            "{} BUY {} {:.2} contracts @ ${:.4} (FOK - partial fill possible)",
             market_name, side, shares, price
         );
-        let shares_rounded = (shares * 10000.0).round() / 10000.0;
+        let count = shares.round().max(1.0) as u64;
         match self
             .api
-            .place_market_order(token_id, shares_rounded, "BUY", Some("FAK"))
+            .place_order_fak(ticker, kalshi_side, count, price)
             .await
         {
-            Ok(_) => crate::log_println!("REAL: FAK order placed"),
+            Ok(_) => crate::log_println!("REAL: FOK order placed"),
             Err(e) => {
-                warn!("Failed to place FAK order: {}", e);
+                warn!("Failed to place FOK order: {}", e);
                 return Err(e.into());
             }
         }
@@ -604,10 +605,10 @@ impl Trader {
             }
             drop(checked);
 
-            let market = match self.api.get_market(&trade.condition_id).await {
+            let market = match self.api.get_market_details(&trade.condition_id).await {
                 Ok(m) => m,
                 Err(e) => {
-                    warn!("Failed to fetch market {}: {}", &trade.condition_id[..16], e);
+                    warn!("Failed to fetch market {}: {}", &trade.condition_id[..16.min(trade.condition_id.len())], e);
                     continue;
                 }
             };
@@ -615,16 +616,9 @@ impl Trader {
                 continue;
             }
 
-            let up_wins = trade
-                .up_token_id
-                .as_ref()
-                .map(|id| market.tokens.iter().any(|t| t.token_id == *id && t.winner))
-                .unwrap_or(false);
-            let down_wins = trade
-                .down_token_id
-                .as_ref()
-                .map(|id| market.tokens.iter().any(|t| t.token_id == *id && t.winner))
-                .unwrap_or(false);
+            // Kalshi: result is "yes" (Up wins) or "no" (Down wins)
+            let up_wins = market.result.as_deref() == Some("yes");
+            let down_wins = market.result.as_deref() == Some("no");
 
             let total_cost = (trade.up_shares * trade.up_avg_price) + (trade.down_shares * trade.down_avg_price);
             let payout = if up_wins {
@@ -651,21 +645,7 @@ impl Trader {
                 pnl
             );
 
-            if !self.simulation_mode && (up_wins || down_wins) {
-                let (token_id, outcome) = if up_wins && trade.up_shares > 0.001 {
-                    (trade.up_token_id.as_deref().unwrap_or(""), "Up")
-                } else {
-                    (trade.down_token_id.as_deref().unwrap_or(""), "Down")
-                };
-                let _units = if up_wins { trade.up_shares } else { trade.down_shares };
-                if let Err(e) = self
-                    .api
-                    .redeem_tokens(&trade.condition_id, token_id, outcome)
-                    .await
-                {
-                    warn!("Redeem failed: {}", e);
-                }
-            }
+            // Kalshi settles automatically — no manual redeem needed.
 
             {
                 let mut total = self.total_profit.lock().await;
