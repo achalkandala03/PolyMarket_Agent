@@ -1,0 +1,8 @@
+{
+  "kalshi": {
+    "base_url": "https://demo-api.kalshi.co/trade-api/v2",
+    "key_id": "ac8fa7f4-3104-453c-aef5-2758eb8e62fd",
+    "private_key_path": "/home/achalk/PolyMarket_Agent/kalshi_private_key.pem"
+  },
+  ...
+}
