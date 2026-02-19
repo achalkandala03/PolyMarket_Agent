@@ -4,7 +4,7 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::DateTime;
 use rand::thread_rng;
 use reqwest::{Client, RequestBuilder};
-use rsa::pkcs8::DecodePrivateKey;
+use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pss::BlindedSigningKey;
 use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use rust_decimal::Decimal;
@@ -36,8 +36,8 @@ impl KalshiApi {
         let signing_key = if let Some(path) = pem_path {
             let pem = std::fs::read_to_string(path)
                 .with_context(|| format!("Cannot read RSA key from '{}'", path))?;
-            let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&pem)
-                .context("Failed to parse RSA private key PEM — make sure it is PKCS#8 format")?;
+            let private_key = rsa::RsaPrivateKey::from_pkcs1_pem(&pem)
+                .context("Failed to parse RSA private key PEM — make sure it is PKCS#1 format (BEGIN RSA PRIVATE KEY)")?;
             Some(BlindedSigningKey::<Sha256>::new(private_key))
         } else {
             None
