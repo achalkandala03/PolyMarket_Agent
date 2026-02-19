@@ -92,13 +92,35 @@ pub struct KalshiMarketsListResponse {
     pub cursor: String,
 }
 
+/// A single level in the Kalshi order book.
+/// Kalshi v2 returns objects: {"price": 42, "count": 100}
+/// Older/doc examples show arrays: [42, 100]
+/// This enum accepts both so the bot doesn't silently break if the format changes.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum OrderBookLevel {
+    /// Object form: {"price": 42, "count": 100}
+    Object { price: u32, count: u32 },
+    /// Array form: [42, 100]
+    Array([u32; 2]),
+}
+
+impl OrderBookLevel {
+    /// Price in cents (1–99).
+    pub fn price_cents(&self) -> u32 {
+        match self {
+            OrderBookLevel::Object { price, .. } => *price,
+            OrderBookLevel::Array(arr) => arr[0],
+        }
+    }
+}
+
 /// Raw orderbook response.
-/// Each entry is [price_cents (1-99), quantity].
-/// The list is sorted ascending — last element = best bid.
+/// Levels are sorted ascending — last element = best bid.
 #[derive(Debug, Deserialize)]
 pub struct KalshiOrderBook {
-    pub yes: Vec<[u32; 2]>,
-    pub no: Vec<[u32; 2]>,
+    pub yes: Vec<OrderBookLevel>,
+    pub no: Vec<OrderBookLevel>,
 }
 
 /// Wrapper returned by GET /trade-api/v2/markets/{ticker}/orderbook

@@ -10,7 +10,6 @@ use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
 use sha2::Sha256;
-use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -231,15 +230,16 @@ impl KalshiApi {
         let ob = &data.orderbook;
 
         // Best bid = highest price = last element of the ascending list
-        let best_yes_bid: Option<u32> = ob.yes.last().map(|e| e[0]);
-        let best_no_bid: Option<u32> = ob.no.last().map(|e| e[0]);
+        let best_yes_bid: Option<u32> = ob.yes.last().map(|e| e.price_cents());
+        let best_no_bid: Option<u32> = ob.no.last().map(|e| e.price_cents());
 
         // Asks are derived from the opposing best bid
-        let yes_ask_cents: Option<u32> = best_no_bid.map(|nb| 100 - nb);
-        let no_ask_cents: Option<u32> = best_yes_bid.map(|yb| 100 - yb);
+        let yes_ask_cents: Option<u32> = best_no_bid.map(|nb| 100u32.saturating_sub(nb));
+        let no_ask_cents: Option<u32> = best_yes_bid.map(|yb| 100u32.saturating_sub(yb));
 
+        // Convert integer cents to Decimal using integer math (no float rounding)
         let cents_to_dec = |c: u32| -> Decimal {
-            Decimal::from_str(&format!("{:.2}", c as f64 / 100.0)).unwrap_or(Decimal::ZERO)
+            Decimal::new(c as i64, 2)
         };
 
         let yes_price = TokenPrice {
