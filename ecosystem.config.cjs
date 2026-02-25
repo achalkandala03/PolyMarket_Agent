@@ -4,7 +4,7 @@ module.exports = {
     // pm2 start ecosystem.config.cjs --only polymarket-bot-sim
     {
       name: "polymarket-bot-sim",
-      script: "./target/release/polymarket-arbitrage-bot",
+      script: "./target/release/kalshi-btc-bot",
       args: "--simulation --config config.json",
       cwd: __dirname,
       interpreter: "none",
@@ -25,7 +25,7 @@ module.exports = {
     // pm2 start ecosystem.config.cjs --only polymarket-bot-live
     {
       name: "polymarket-bot-live",
-      script: "./target/release/polymarket-arbitrage-bot",
+      script: "./target/release/kalshi-btc-bot",
       args: "--production --config config.json",
       cwd: __dirname,
       interpreter: "none",
